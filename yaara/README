@@ -1,0 +1,9 @@
+yaara.feldman, aronisaacs
+Yaara Feldman (323784116), Aron Isaacs (342808292)
+EX: 3
+
+FILES:
+README
+Makefile
+Barrier.h, Barrier.cpp - using the provided barrier class
+MapReduceFramework.cpp - the main file of the code in the project
