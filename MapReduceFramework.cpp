@@ -114,7 +114,7 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 //    }
     //create rest of threads - function without shuffle
     for (int i = 1; i < context->thread_num; i++) {
-        std::thread new_thread = new thread(&thread_func, context);
+        std::thread new_thread* = new thread(&thread_func, context);
         if (!new_thread) {
             printf("system error: thread creation failed");
             exit(1);
