@@ -100,7 +100,7 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
                                          multiThreadLevel);
     context->stage = MAP_STAGE;
     // create main thread
-    std::thread new_thread = new thread(&main_thread_func, context);
+    std::thread* new_thread = new thread(&main_thread_func, context);
     if (!new_thread) {
         printf("system error: thread creation failed");
         exit(1);
