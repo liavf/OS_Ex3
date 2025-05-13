@@ -264,7 +264,7 @@ void thread_reduce(JobContext *jobContext) {
         jobContext->shuff_int_vec.pop_back();
         jobContext->reduce_mutex.unlock();
         jobContext->client->reduce(curr_vec, jobContext);
-        jobContext->atomic_progress += curr_vec.size();
+//        jobContext->atomic_progress += curr_vec.size();
     }
 }
 
