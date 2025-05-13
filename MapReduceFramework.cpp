@@ -74,8 +74,9 @@ void thread_map(JobContext *jobContext);
 void thread_shuffle(JobContext *jobContext);
 void thread_reduce(JobContext *jobContext);
 
-void move_to_shuffle(JobContext *jobContext);
-void move_to_reduce(JobContext *jobContext);
+void move_to_next_phase(JobContext *jobContext, int next_stage);
+//void move_to_shuffle(JobContext *jobContext);
+//void move_to_reduce(JobContext *jobContext);
 
 
 void *main_thread_func(void *arg) {
@@ -132,13 +133,12 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 
 
 void emit2 (K2* key, V2* value, void* context) {
-    JobContext* job_context = static_cast<JobContext *>(context);
+    IntermediateVec *inter_vec = static_cast<IntermediateVec *>(context);
+//    JobContext* job_context = static_cast<JobContext *>(context);
     IntermediatePair pair_to_add = {key, value};
-//    job_context->inter_mutex.lock();
-//    job_context->atomic_progress++;
+    job_context->atomic_progress++;
 //    job_context->atomic_inter_count++;
-    job_context->inter_vec->push_back(pair_to_add);
-//    job_context->inter_mutex.unlock();
+    inter_vec->push_back(pair_to_add);
 }
 
 void emit3 (K3* key, V3* value, void* context) {
@@ -215,16 +215,9 @@ void thread_map(JobContext *jobContext) {
     jobContext->inter_mutex->unlock();
 }
 
-void move_to_shuffle(JobContext *jobContext) {
-    jobContext->stage_mutex.lock();
-    jobContext->stage = SHUFFLE_STAGE;
-    jobContext->total_progress = jobContext->atomic_inter_count;
-    jobContext->atomic_progress = 0;
-    jobContext->stage_mutex.unlock();
-}
-
 void thread_shuffle(JobContext *jobContext) {
-    move_to_shuffle(jobContext);
+//    move_to_shuffle(jobContext);
+    move_to_next_phase(jobContext, SHUFFLE_STAGE);
 
     while (true) {
         //find minimal key from all vectors
@@ -258,16 +251,9 @@ void thread_shuffle(JobContext *jobContext) {
     }
 }
 
-void move_to_reduce(JobContext *jobContext) {
-    jobContext->stage_mutex.lock();
-    jobContext->stage = REDUCE_STAGE;
-    jobContext->total_progress = jobContext->atomic_key_count;
-    jobContext->atomic_progress = 0;
-    jobContext->stage_mutex.unlock();
-}
-
 void thread_reduce(JobContext *jobContext) {
-    move_to_reduce(jobContext);
+//    move_to_reduce(jobContext);
+    move_to_next_phase(jobContext, REDUCE_STAGE);
     while (true) {
         jobContext->reduce_mutex.lock();
         if (jobContext->shuff_int_vec.empty()) {
@@ -278,8 +264,32 @@ void thread_reduce(JobContext *jobContext) {
         jobContext->shuff_int_vec.pop_back();
         jobContext->reduce_mutex.unlock();
         jobContext->client->reduce(curr_vec, jobContext);
-        jobContext->atomic_progress++;
+        jobContext->atomic_progress += curr_vec.size();
     }
 }
+
+void move_to_next_phase(JobContext *jobContext, int next_stage) {
+    jobContext->stage_mutex.lock();
+    jobContext->stage = next_stage;
+    jobContext->total_progress = jobContext->atomic_inter_count;
+    jobContext->atomic_progress = 0;
+    jobContext->stage_mutex.unlock();
+}
+
+//void move_to_shuffle(JobContext *jobContext) {
+//    jobContext->stage_mutex.lock();
+//    jobContext->stage = SHUFFLE_STAGE;
+//    jobContext->total_progress = jobContext->atomic_inter_count;
+//    jobContext->atomic_progress = 0;
+//    jobContext->stage_mutex.unlock();
+//}
+//
+//void move_to_reduce(JobContext *jobContext) {
+//    jobContext->stage_mutex.lock();
+//    jobContext->stage = REDUCE_STAGE;
+//    jobContext->total_progress = jobContext->atomic_key_count;
+//    jobContext->atomic_progress = 0;
+//    jobContext->stage_mutex.unlock();
+//}
 
 
