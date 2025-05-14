@@ -173,7 +173,7 @@ void emit3 (K3* key, V3* value, void* context) {
     job_context->output_mutex.lock();
     try
     {
-        std::cout << "[EMIT3] Output: Key = " << key << ", Value = " << value << std::endl;
+//        std::cout << "[EMIT3] Output: Key = " << key << ", Value = " << value << std::endl;
         job_context->output_vec->push_back(output_pair);
         job_context->atomic_progress++;
     }
