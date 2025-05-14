@@ -5,6 +5,7 @@
 #include "MapReduceFramework.h"
 #include "Barrier.h"
 #include <iostream>
+#include <algorithm>
 #include <atomic>
 #include <thread>
 #include <vector>
