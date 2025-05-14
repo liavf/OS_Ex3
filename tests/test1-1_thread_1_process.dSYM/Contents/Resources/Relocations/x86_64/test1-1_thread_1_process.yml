@@ -1,0 +1,5 @@
+---
+triple:          'x86_64-apple-darwin'
+binary-path:     'tests/test1-1_thread_1_process'
+relocations:     []
+...
