@@ -30,14 +30,20 @@ $(TARGETS): $(LIBOBJ)
 
 test: $(MAPREDUCELIB) $(TESTBINS)
 	@echo "Running tests..."
+	@mkdir -p actual
 	@bash -c 'for bin in $(TESTBINS); do \
+		name=$$(basename $$bin); \
 		echo "Running $$bin..."; \
-		./$$bin | tee $$bin.out; \
+		./$$bin > actual/$$name.out 2>&1; \
 		if [ -f $$bin.txt ]; then \
-			if diff <(sort $$bin.out) <(sort $$bin.txt); then \
+			if diff -u $$bin.txt actual/$$name.out > actual/$$name.diff; then \
 				echo "✅ $$bin passed"; \
+				rm -f actual/$$name.diff; \
 			else \
-				echo "❌ $$bin failed (sorted diff mismatch)"; \
+				echo "❌ $$bin failed (mismatch):"; \
+				echo "------------------- DIFF -------------------"; \
+				cat actual/$$name.diff; \
+				echo "---------------------------------------------"; \
 			fi; \
 		else \
 			echo "⚠️  No expected output ($$bin.txt) to compare."; \

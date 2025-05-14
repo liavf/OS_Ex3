@@ -85,10 +85,15 @@ void move_to_next_phase(JobContext *jobContext, stage_t next_stage);
 
 void *main_thread_func(void *arg) {
     JobContext *context = static_cast<JobContext *>(arg);
+//    std::cout << "[MAIN] Starting map" << std::endl;
     thread_map(context);
+//    std::cout << "[MAIN] Finished map, entering barrier1" << std::endl;
     context->barrier.barrier();
+//    std::cout << "[MAIN] Passed barrier1, starting shuffle" << std::endl;
     thread_shuffle(context);
+//    std::cout << "[MAIN] Finished shuffle, entering barrier2" << std::endl;
     context->barrier.barrier();
+//    std::cout << "[MAIN] Passed barrier2, starting reduce" << std::endl;
     thread_reduce(context);
     return nullptr;
 }
@@ -99,7 +104,6 @@ void *thread_func(void *arg) {
     context->barrier.barrier();
     context->barrier.barrier(); // barrier for shuffle
     thread_reduce(context);
-
     return nullptr;
 }
 
@@ -162,6 +166,7 @@ void emit2 (K2* key, V2* value, void* context) {
 //    job_context->atomic_progress++;
 ////    job_context->atomic_inter_count++;
 //    job_context->inter_vec.push_back(pair_to_add);
+//    std::cout << "[EMIT2] Output: Key = " << key << ", Value = " << value << std::endl;
     auto* ctx = static_cast<Emit2Context*>(context);
     ctx->inter_vec->push_back({key, value});
     ctx->atomic_inter_count->fetch_add(1);
@@ -175,7 +180,7 @@ void emit3 (K3* key, V3* value, void* context) {
     {
 //        std::cout << "[EMIT3] Output: Key = " << key << ", Value = " << value << std::endl;
         job_context->output_vec->push_back(output_pair);
-        job_context->atomic_progress++;
+        job_context->atomic_inter_count.fetch_add(1);
     }
     catch (...) {
         std::cerr << "system error: failed to push to output vector\n";
@@ -240,9 +245,14 @@ void getJobState(JobHandle job, JobState* state) {
 }
 
 void closeJobHandle(JobHandle job) {
-    //////  ASSUMPTION - ONLY ONE JOB CALLS IT, NO NEED FOR MUTEX////////
+    // TODO: check ASSUMPTION - ONLY ONE JOB CALLS IT, so NO NEED FOR MUTEX
     JobContext *job_context = static_cast<JobContext *>(job);
     waitForJob(job);
+    // TODO: check if this is the wanted output sort
+    std::sort(job_context->output_vec->begin(), job_context->output_vec->end(),
+              [](const OutputPair &a, const OutputPair &b) {
+                  return *(a.first) < *(b.first);
+              });
     delete job_context;
 }
 
@@ -258,8 +268,6 @@ void thread_map(JobContext *jobContext) {
     emit_ctx.atomic_inter_count = &jobContext->atomic_inter_count;
 
     int input_length = jobContext->input_vec->size();
-//    while (jobContext->atomic_input_count < input_length) {
-//    DELETED BECAUSE IT CAN CAUSE RACE CONDITION - IF MULTIPLE THREADS CHECK IT
     while (true) {
         int curr_index = jobContext->atomic_input_count.fetch_add(1);
         if (curr_index >= input_length) {
@@ -270,12 +278,12 @@ void thread_map(JobContext *jobContext) {
         const K1* key = curr_pair.first;
         const V1* val = curr_pair.second;
         jobContext->client->map(key, val, &emit_ctx);
+        jobContext->atomic_progress.fetch_add(1);
     }
     //sort for later
     std::sort(new_vec.begin(), new_vec.end(), compare_func);
     std::unique_lock<std::mutex> lock(jobContext->inter_mutex);
     jobContext->inter_vec.push_back(new_vec);
-//    jobContext->atomic_inter_count += new_vec.size(); // already in emit2
 }
 
 bool keys_equal(K2* a, K2* b) {
@@ -283,24 +291,22 @@ bool keys_equal(K2* a, K2* b) {
 }
 
 void thread_shuffle(JobContext *jobContext) {
-//    move_to_shuffle(jobContext);
     move_to_next_phase(jobContext, SHUFFLE_STAGE);
 
     while (true) {
-        //find minimal key from all vectors
+        //find minimal key from all non-empty vectors
         K2* max_key = nullptr;
-        // Find the max key from all non-empty vectors
-        for (int i = 0; i < jobContext->thread_num; ++i) {
+        for (int i = 0; i < jobContext->thread_num; i++) {
             if (!jobContext->inter_vec[i].empty()) {
-                std::cout << "[SHUFFLE] Thread " << i << " BACK key = " << (jobContext->inter_vec[i].back().first) << std::endl;
+//                std::cout << "[SHUFFLE] Thread " << i << " BACK key = " << (jobContext->inter_vec[i].back().first) << std::endl;
                 K2* candidate = jobContext->inter_vec[i].back().first;
                 if (!max_key || *max_key < *candidate) {
                     max_key = candidate;
                 }
             }
         }
-        if (!max_key) {
-            break; // all vectors are empty
+        if (max_key == nullptr) {
+            break; // all vectors are empty or finished
         }
 
         //create a vector for each key and pop all elements from thread vectors
@@ -312,12 +318,26 @@ void thread_shuffle(JobContext *jobContext) {
 //                          << " from thread " << i << std::endl;
                 key_vec.push_back(vec.back());
                 vec.pop_back();
-                jobContext->atomic_progress++;
+                jobContext->atomic_progress.fetch_add(1);
             }
         }
 
         //push key vector into shuffled vector
-        jobContext->shuff_int_vec.push_back(key_vec);
+        if (!key_vec.empty()) {
+//            // DEBUG
+//            std::cout << "[SHUFFLE] Grouped key: " << static_cast<const void*>(key_vec.back().first)
+//                      << " with size: " << key_vec.size() << std::endl;
+//
+//            // Confirm all keys in group are same
+//            for (auto& pair : key_vec) {
+//                if (!keys_equal(pair.first, key_vec.back().first)) {
+//                    std::cerr << "[BUG] Found mixed keys in key_vec! "
+//                              << static_cast<const void*>(pair.first) << " vs " << static_cast<const void*>(key_vec.back().first) << std::endl;
+//                }
+//            }
+//            // END DEUBUG
+            jobContext->shuff_int_vec.push_back(key_vec);
+        }
 //        jobContext->atomic_key_count++;
     }
 }
@@ -335,14 +355,22 @@ void thread_reduce(JobContext *jobContext) {
         curr_vec = jobContext->shuff_int_vec.back();
         jobContext->shuff_int_vec.pop_back();
         jobContext->reduce_mutex.unlock();
-        // DEBUG//
-        if (!curr_vec.empty()) {
-//            std::cout << "[REDUCE] Reducing Key at address = " << curr_vec.back().first
-//                      << ", Num Pairs = " << curr_vec.size() << std::endl;
-        }
+//        // DEBUG//
+//        if (!curr_vec.empty()) {
+////            std::cout << "[REDUCE] Reducing key: " << static_cast<const void*>(curr_vec[0].first)
+////                      << " with size: " << curr_vec.size() << std::endl;
+//
+//            for (auto& pair : curr_vec) {
+//                if (!keys_equal(pair.first, curr_vec[0].first)) {
+//                    std::cerr << "[BUG] Mixed keys in reduce vector! "
+//                              << static_cast<const void*>(pair.first) << " vs " << static_cast<const void*>(curr_vec[0].first) << std::endl;
+//                }
+//            }
+//        }
+//        // END DEBUG
         jobContext->client->reduce(&curr_vec, jobContext);
-//        jobContext->atomic_progress++;
-//        jobContext->atomic_progress += curr_vec.size();
+        // TODO - check protection here
+        jobContext->atomic_progress += curr_vec.size();
     }
 }
 
@@ -369,5 +397,3 @@ void move_to_next_phase(JobContext *jobContext, stage_t next_stage) {
 //    jobContext->atomic_progress = 0;
 //    jobContext->stage_mutex.unlock();
 //}
-
-
