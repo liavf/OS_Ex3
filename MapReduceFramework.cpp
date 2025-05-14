@@ -250,7 +250,7 @@ bool compare_func(const IntermediatePair &a, const IntermediatePair &b) {
     return *(a.first) < *(b.first);
 }
 
-void thread_bmap(JobContext *jobContext) {
+void thread_map(JobContext *jobContext) {
     //each thread has its own vector
     IntermediateVec new_vec;
     Emit2Context emit_ctx;
