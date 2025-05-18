@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <thread>
 #include "pthread.h"
+#include <numeric>
 
 struct Emit2Context {
     IntermediateVec* inter_vec; // thread level
@@ -68,6 +69,7 @@ JobContext::JobContext(const MapReduceClient &client,
 //    atomic_key_count = 0;
 //    pthread_t* threads = new pthread_t[thread_num];
 //    this->all_threads = threads;
+    this->all_threads.reserve(thread_num);
     is_waiting = false;
 };
 
@@ -168,9 +170,12 @@ void emit2 (K2* key, V2* value, void* context) {
 ////    job_context->atomic_inter_count++;
 //    job_context->inter_vec.push_back(pair_to_add);
 //    std::cout << "[EMIT2] Output: Key = " << key << ", Value = " << value << std::endl;
-    auto* ctx = static_cast<Emit2Context*>(context);
-    ctx->inter_vec->push_back({key, value});
-    ctx->atomic_inter_count->fetch_add(1);
+//    auto* ctx = static_cast<Emit2Context*>(context);
+//    ctx->inter_vec->push_back({key, value});
+//    ctx->atomic_inter_count->fetch_add(1);
+    IntermediateVec *intervec = static_cast<IntermediateVec *>(context);
+//    IntermediatePair newPair = {key, value};
+    intervec->push_back({key, value});
 }
 
 void emit3 (K3* key, V3* value, void* context) {
@@ -181,7 +186,7 @@ void emit3 (K3* key, V3* value, void* context) {
     {
 //        std::cout << "[EMIT3] Output: Key = " << key << ", Value = " << value << std::endl;
         job_context->output_vec->push_back(output_pair);
-        job_context->atomic_inter_count.fetch_add(1);
+//        job_context->atomic_inter_count.fetch_add(1);
     }
     catch (...) {
         std::cerr << "system error: failed to push to output vector\n";
@@ -264,13 +269,13 @@ bool compare_func(const IntermediatePair &a, const IntermediatePair &b) {
 void thread_map(JobContext *jobContext) {
     //each thread has its own vector
     IntermediateVec new_vec;
-    Emit2Context emit_ctx;
-    emit_ctx.inter_vec = &new_vec;
-    emit_ctx.atomic_inter_count = &jobContext->atomic_inter_count;
+//    Emit2Context emit_ctx;
+//    emit_ctx.inter_vec = &new_vec;
+//    emit_ctx.atomic_inter_count = &jobContext->atomic_inter_count;
 
     int input_length = jobContext->input_vec->size();
     while (true) {
-        int curr_index = jobContext->atomic_input_count.fetch_add(1);
+        long unsigned int curr_index = jobContext->atomic_input_count.fetch_add(1);
         if (curr_index >= input_length) {
             break;  // done
         }
@@ -278,8 +283,9 @@ void thread_map(JobContext *jobContext) {
         auto& curr_pair = (*jobContext->input_vec)[curr_index];
         const K1* key = curr_pair.first;
         const V1* val = curr_pair.second;
-        jobContext->client->map(key, val, &emit_ctx);
+        jobContext->client->map(key, val, &new_vec);
         jobContext->atomic_progress.fetch_add(1);
+        jobContext->atomic_inter_count.fetch_add(1);
     }
     //sort for later
     std::sort(new_vec.begin(), new_vec.end(), compare_func);
@@ -371,14 +377,21 @@ void thread_reduce(JobContext *jobContext) {
 //        // END DEBUG
         jobContext->client->reduce(&curr_vec, jobContext);
         // TODO - check protection here
-        jobContext->atomic_progress += curr_vec.size();
+        jobContext->atomic_progress.fetch_add(curr_vec.size());
     }
 }
 
 void move_to_next_phase(JobContext *jobContext, stage_t next_stage) {
     jobContext->stage_mutex.lock();
     jobContext->stage = next_stage;
-    jobContext->total_progress = jobContext->atomic_inter_count;
+    if (next_stage == SHUFFLE_STAGE) {
+        auto &vec = jobContext->inter_vec;
+        jobContext->total_progress = std::accumulate(vec.begin(), vec.end(), 0,
+                                                     [](int total, const std::vector<std::pair<K2 *, V2 *>> &inner_vec) {
+                                                         return total + inner_vec.size();
+                                                     });
+    }
+//    jobContext->total_progress = jobContext->atomic_inter_count;
     jobContext->atomic_progress = 0;
     jobContext->stage_mutex.unlock();
 }
