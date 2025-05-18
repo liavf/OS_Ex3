@@ -273,7 +273,7 @@ void thread_map(JobContext *jobContext) {
 //    emit_ctx.inter_vec = &new_vec;
 //    emit_ctx.atomic_inter_count = &jobContext->atomic_inter_count;
 
-    int input_length = jobContext->input_vec->size();
+    long unsigned int input_length = jobContext->input_vec->size();
     while (true) {
         long unsigned int curr_index = jobContext->atomic_input_count.fetch_add(1);
         if (curr_index >= input_length) {
@@ -347,11 +347,12 @@ void thread_shuffle(JobContext *jobContext) {
         }
 //        jobContext->atomic_key_count++;
     }
+    move_to_next_phase(jobContext, REDUCE_STAGE);
 }
 
 void thread_reduce(JobContext *jobContext) {
 //    move_to_reduce(jobContext);
-    move_to_next_phase(jobContext, REDUCE_STAGE);
+
     while (true) {
         IntermediateVec curr_vec;
         jobContext->reduce_mutex.lock();
